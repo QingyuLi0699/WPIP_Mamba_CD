@@ -19,6 +19,7 @@ from utils.sliding_inference import (
     center_logits,
     compute_metrics,
     predict_patch_centers,
+    predict_from_outputs,
     reconstruct_prediction_map,
     save_prediction_outputs,
     write_result_txt,
@@ -44,9 +45,14 @@ def parse_args():
     parser.add_argument("--save-full-map", action="store_true")
     parser.add_argument("--no-balanced-train", action="store_true")
     parser.add_argument("--no-class-weight", action="store_true")
+    parser.add_argument("--no-binary-class-weight", action="store_true")
     parser.add_argument("--class-weight-power", type=float, default=0.5)
     parser.add_argument("--train-augment", action="store_true")
+    parser.add_argument("--sampler-class-probs", default="")
     parser.add_argument("--no-logit-calibration", action="store_true")
+    parser.add_argument("--semantic-change-only", action="store_true")
+    parser.add_argument("--two-stage-decision", action="store_true")
+    parser.add_argument("--binary-threshold", type=float, default=0.5)
     parser.add_argument("--skip-inference", action="store_true")
     parser.add_argument(
         "--input-mode",
@@ -55,6 +61,19 @@ def parse_args():
         help="dual keeps separate T1/T2 branches; concat feeds T1||T2 as one HSI cube into the MambaHSI encoder.",
     )
     return parser.parse_args()
+
+
+def parse_class_probs(spec: str):
+    if not spec:
+        return None
+    probs = {}
+    for item in spec.split(","):
+        key, value = item.split(":")
+        probs[int(key)] = float(value)
+    total = sum(probs.values())
+    if total <= 0:
+        raise ValueError("--sampler-class-probs must sum to a positive value.")
+    return {key: value / total for key, value in probs.items()}
 
 
 def set_seed(seed: int):
@@ -115,7 +134,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device: torch.device) -
 
 
 @torch.no_grad()
-def evaluate_center_oa(model, loader, criterion, device: torch.device) -> Dict[str, float]:
+def evaluate_center_oa(
+    model,
+    loader,
+    criterion,
+    device: torch.device,
+    two_stage: bool = False,
+    binary_threshold: float = 0.5,
+) -> Dict[str, float]:
     model.eval()
     running = 0.0
     seen = 0
@@ -130,7 +156,7 @@ def evaluate_center_oa(model, loader, criterion, device: torch.device) -> Dict[s
 
         target = center_labels(labels)
         valid = target >= 0
-        pred = center_logits(outputs["final_logits"]).argmax(dim=1)
+        pred = predict_from_outputs(outputs, two_stage=two_stage, binary_threshold=binary_threshold)
         correct += (pred[valid] == target[valid]).sum().item()
         total += valid.sum().item()
         batch = x1.shape[0]
@@ -142,8 +168,18 @@ def evaluate_center_oa(model, loader, criterion, device: torch.device) -> Dict[s
     }
 
 
-def run_sliding_inference(model, bundle, loader, split_name: str, output_dir: str, dataset_name: str, device: torch.device):
-    preds = predict_patch_centers(model, loader, device)
+def run_sliding_inference(
+    model,
+    bundle,
+    loader,
+    split_name: str,
+    output_dir: str,
+    dataset_name: str,
+    device: torch.device,
+    two_stage: bool = False,
+    binary_threshold: float = 0.5,
+):
+    preds = predict_patch_centers(model, loader, device, two_stage=two_stage, binary_threshold=binary_threshold)
     indices = bundle.splits[split_name]
     h, w = bundle.labels.shape
     pred_map = reconstruct_prediction_map(preds, indices, h, w)
@@ -182,6 +218,7 @@ def main():
         val_ratio=args.val_ratio,
         balanced_train=not args.no_balanced_train,
         train_augment=args.train_augment,
+        train_class_probs=parse_class_probs(args.sampler_class_probs),
     )
     print(
         f"Loaded {args.dataset}: x={bundle.x1.shape}, classes=0..{bundle.num_change_classes}, "
@@ -205,14 +242,20 @@ def main():
             num_classes=bundle.num_change_classes + 1,
             power=args.class_weight_power,
         )
-        binary_train = (bundle.labels.reshape(-1)[bundle.splits["train"]] > 0).astype(np.int64)
-        bin_counts = np.bincount(binary_train, minlength=2).astype(np.float64)
-        bin_counts = np.maximum(bin_counts, 1.0)
-        bin_w = 1.0 / np.power(bin_counts, args.class_weight_power)
-        binary_weights = torch.as_tensor(bin_w / bin_w.mean(), dtype=torch.float32)
+        if not args.no_binary_class_weight:
+            binary_train = (bundle.labels.reshape(-1)[bundle.splits["train"]] > 0).astype(np.int64)
+            bin_counts = np.bincount(binary_train, minlength=2).astype(np.float64)
+            bin_counts = np.maximum(bin_counts, 1.0)
+            bin_w = 1.0 / np.power(bin_counts, args.class_weight_power)
+            binary_weights = torch.as_tensor(bin_w / bin_w.mean(), dtype=torch.float32)
         print(f"semantic_class_weights={semantic_weights.tolist()}")
-        print(f"binary_class_weights={binary_weights.tolist()}")
-    criterion = WPIPLoss(lambda_pseudo=0.1, semantic_class_weights=semantic_weights, binary_class_weights=binary_weights)
+        print(f"binary_class_weights={None if binary_weights is None else binary_weights.tolist()}")
+    criterion = WPIPLoss(
+        lambda_pseudo=0.1,
+        semantic_class_weights=semantic_weights,
+        binary_class_weights=binary_weights,
+        semantic_change_only=args.semantic_change_only,
+    )
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     best_val = 0.0
@@ -220,7 +263,14 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, loaders["train"], optimizer, criterion, device)
-        val_stats = evaluate_center_oa(model, loaders["val"], criterion, device)
+        val_stats = evaluate_center_oa(
+            model,
+            loaders["val"],
+            criterion,
+            device,
+            two_stage=args.two_stage_decision,
+            binary_threshold=args.binary_threshold,
+        )
         is_best = val_stats["center_oa"] >= best_val
         best_val = max(best_val, val_stats["center_oa"])
         print(
@@ -254,6 +304,8 @@ def main():
             output_dir=str(output_dir),
             dataset_name=args.dataset,
             device=device,
+            two_stage=args.two_stage_decision,
+            binary_threshold=args.binary_threshold,
         )
         summary = {"best_val_center_oa": best_val, args.inference_split: test_metrics, "outputs": paths}
         if args.save_full_map and args.inference_split != "all":
@@ -265,6 +317,8 @@ def main():
                 output_dir=str(output_dir),
                 dataset_name=args.dataset,
                 device=device,
+                two_stage=args.two_stage_decision,
+                binary_threshold=args.binary_threshold,
             )
             summary["all"] = all_metrics
             summary["full_map_outputs"] = all_paths

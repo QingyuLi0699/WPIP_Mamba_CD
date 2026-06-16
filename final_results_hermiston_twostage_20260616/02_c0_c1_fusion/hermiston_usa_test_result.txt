@@ -1,0 +1,12 @@
+hermiston_usa test c1-c0 fusion
+OA=0.936972
+AA=0.831022
+KC=0.838678
+Per-class Acc:
+  class 0: 0.966486
+  class 1: 0.905447
+  class 2: 0.778011
+  class 3: 0.878274
+  class 4: 0.722591
+  class 5: 0.859779
+  class 6: 0.706566

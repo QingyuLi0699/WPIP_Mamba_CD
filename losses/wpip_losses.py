@@ -86,6 +86,7 @@ class WPIPLoss(nn.Module):
         ignore_index=-1,
         semantic_class_weights=None,
         binary_class_weights=None,
+        semantic_change_only: bool = False,
     ):
         super().__init__()
         self.lambda_sem = lambda_sem
@@ -93,6 +94,7 @@ class WPIPLoss(nn.Module):
         self.lambda_pseudo = lambda_pseudo
         self.lambda_cons = lambda_cons
         self.ignore_index = ignore_index
+        self.semantic_change_only = semantic_change_only
         if semantic_class_weights is not None:
             self.register_buffer("semantic_class_weights", torch.as_tensor(semantic_class_weights, dtype=torch.float32))
         else:
@@ -116,7 +118,18 @@ class WPIPLoss(nn.Module):
 
         final_logits = resize_logits(outputs["final_logits"], labels)
         semantic_weight = self.semantic_class_weights.to(final_logits.device) if self.semantic_class_weights is not None else None
-        loss_sem = F.cross_entropy(final_logits, labels.long(), weight=semantic_weight, ignore_index=self.ignore_index)
+        if self.semantic_change_only:
+            labels_down = labels.long()
+            change_mask = labels_down > 0
+            if change_mask.any():
+                change_logits = final_logits[:, 1:].permute(0, 2, 3, 1)[change_mask]
+                change_target = labels_down[change_mask] - 1
+                change_weight = semantic_weight[1:] if semantic_weight is not None and semantic_weight.numel() == final_logits.shape[1] else None
+                loss_sem = F.cross_entropy(change_logits, change_target, weight=change_weight)
+            else:
+                loss_sem = final_logits.sum() * 0.0
+        else:
+            loss_sem = F.cross_entropy(final_logits, labels.long(), weight=semantic_weight, ignore_index=self.ignore_index)
         loss_proto = self.proto_loss(outputs["prototype_logits"], labels)
         loss_pseudo = self.pseudo_loss(outputs["final_logits"], outputs["pseudo_label"], outputs["pseudo_mask"])
         loss_cons = self.consistency(outputs["final_logits"], outputs["binary_logits"])

@@ -235,6 +235,7 @@ def build_hsi_cd_dataloaders(
     val_ratio: float = 0.1,
     balanced_train: bool = False,
     train_augment: bool = False,
+    train_class_probs: Optional[Mapping[int, float]] = None,
 ) -> Tuple[HSICDDataBundle, Dict[str, DataLoader]]:
     """Build train/val/test/all DataLoaders for a built-in preset."""
     bundle = load_hsi_cd_preset(
@@ -256,7 +257,24 @@ def build_hsi_cd_dataloaders(
         )
         sampler = None
         shuffle = split_name == "train"
-        if split_name == "train" and balanced_train and len(bundle.splits[split_name]) > 0:
+        if split_name == "train" and train_class_probs and len(bundle.splits[split_name]) > 0:
+            flat_labels = bundle.labels.reshape(-1)
+            split_labels = flat_labels[bundle.splits[split_name]]
+            classes, counts = np.unique(split_labels, return_counts=True)
+            count_map = {int(cls): float(count) for cls, count in zip(classes, counts)}
+            sample_weights = np.asarray(
+                [float(train_class_probs.get(int(cls), 0.0)) / max(count_map[int(cls)], 1.0) for cls in split_labels],
+                dtype=np.float64,
+            )
+            if sample_weights.sum() <= 0:
+                raise ValueError("train_class_probs produced zero sampling weight for the training split.")
+            sampler = WeightedRandomSampler(
+                weights=torch.as_tensor(sample_weights, dtype=torch.double),
+                num_samples=len(sample_weights),
+                replacement=True,
+            )
+            shuffle = False
+        elif split_name == "train" and balanced_train and len(bundle.splits[split_name]) > 0:
             flat_labels = bundle.labels.reshape(-1)
             split_labels = flat_labels[bundle.splits[split_name]]
             classes, counts = np.unique(split_labels, return_counts=True)

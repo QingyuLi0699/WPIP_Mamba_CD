@@ -26,6 +26,7 @@ Common protocol:
 | C0/C1 fusion | 0.9370 | 0.8310 | 0.8387 | 0.9665 | 0.9054 | Best C0/C1 tradeoff, uses prediction fusion |
 | Balanced+aug 20% reference | 0.8941 | 0.9061 | 0.7650 | 0.8864 | 0.8702 | Best AA / balanced semantic classes |
 | C0 expert reference | 0.9436 | 0.8436 | 0.8554 | 0.9706 | 0.7861 | Best class-0 single-model reference |
+| Semantic-rescue other-classes | 0.8827 | 0.8978 | 0.7425 | 0.8753 | 0.9464 | Recovers semantic change classes via rescue gate |
 
 ## Recommended Use
 
@@ -45,6 +46,17 @@ It reaches class 0 close to the requested 97% target and class 1 above the
 requested 88% target, but it is a prediction-level fusion of two trained
 two-stage variants.
 
+For diagnosing whether the semantic branch can recover the nonzero change
+classes, use:
+
+`05_semantic_rescue_other_classes`
+
+This variant lets high-confidence semantic changes override the binary gate.
+It restores class 1 and most other change categories close to the balanced
+reference, but sacrifices class 0. This confirms that the lower change-class
+accuracy in strict two-stage inference is mainly caused by binary false
+negatives rather than a completely weak semantic branch.
+
 ## Folder Contents
 
 Each subfolder contains:
@@ -61,3 +73,4 @@ Subfolders:
 - `02_c0_c1_fusion`: fuses the C1-emphasized semantic expert with the C0 expert.
 - `03_balanced_aug_20_reference`: previous balanced+aug 20% reference.
 - `04_c0_expert_reference`: no-balanced 20% reference, strongest class-0 model.
+- `05_semantic_rescue_other_classes`: semantic-rescue two-stage inference, strongest change-class recovery.

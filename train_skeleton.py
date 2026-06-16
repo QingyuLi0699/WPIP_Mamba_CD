@@ -53,6 +53,9 @@ def parse_args():
     parser.add_argument("--semantic-change-only", action="store_true")
     parser.add_argument("--two-stage-decision", action="store_true")
     parser.add_argument("--binary-threshold", type=float, default=0.5)
+    parser.add_argument("--semantic-rescue", action="store_true")
+    parser.add_argument("--semantic-threshold", type=float, default=0.99)
+    parser.add_argument("--lambda-semantic-binary", type=float, default=0.0)
     parser.add_argument("--skip-inference", action="store_true")
     parser.add_argument(
         "--input-mode",
@@ -141,6 +144,8 @@ def evaluate_center_oa(
     device: torch.device,
     two_stage: bool = False,
     binary_threshold: float = 0.5,
+    semantic_rescue: bool = False,
+    semantic_threshold: float = 0.99,
 ) -> Dict[str, float]:
     model.eval()
     running = 0.0
@@ -156,7 +161,13 @@ def evaluate_center_oa(
 
         target = center_labels(labels)
         valid = target >= 0
-        pred = predict_from_outputs(outputs, two_stage=two_stage, binary_threshold=binary_threshold)
+        pred = predict_from_outputs(
+            outputs,
+            two_stage=two_stage,
+            binary_threshold=binary_threshold,
+            semantic_rescue=semantic_rescue,
+            semantic_threshold=semantic_threshold,
+        )
         correct += (pred[valid] == target[valid]).sum().item()
         total += valid.sum().item()
         batch = x1.shape[0]
@@ -178,8 +189,18 @@ def run_sliding_inference(
     device: torch.device,
     two_stage: bool = False,
     binary_threshold: float = 0.5,
+    semantic_rescue: bool = False,
+    semantic_threshold: float = 0.99,
 ):
-    preds = predict_patch_centers(model, loader, device, two_stage=two_stage, binary_threshold=binary_threshold)
+    preds = predict_patch_centers(
+        model,
+        loader,
+        device,
+        two_stage=two_stage,
+        binary_threshold=binary_threshold,
+        semantic_rescue=semantic_rescue,
+        semantic_threshold=semantic_threshold,
+    )
     indices = bundle.splits[split_name]
     h, w = bundle.labels.shape
     pred_map = reconstruct_prediction_map(preds, indices, h, w)
@@ -255,6 +276,7 @@ def main():
         semantic_class_weights=semantic_weights,
         binary_class_weights=binary_weights,
         semantic_change_only=args.semantic_change_only,
+        lambda_semantic_binary=args.lambda_semantic_binary,
     )
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -270,6 +292,8 @@ def main():
             device,
             two_stage=args.two_stage_decision,
             binary_threshold=args.binary_threshold,
+            semantic_rescue=args.semantic_rescue,
+            semantic_threshold=args.semantic_threshold,
         )
         is_best = val_stats["center_oa"] >= best_val
         best_val = max(best_val, val_stats["center_oa"])
@@ -306,6 +330,8 @@ def main():
             device=device,
             two_stage=args.two_stage_decision,
             binary_threshold=args.binary_threshold,
+            semantic_rescue=args.semantic_rescue,
+            semantic_threshold=args.semantic_threshold,
         )
         summary = {"best_val_center_oa": best_val, args.inference_split: test_metrics, "outputs": paths}
         if args.save_full_map and args.inference_split != "all":
@@ -319,6 +345,8 @@ def main():
                 device=device,
                 two_stage=args.two_stage_decision,
                 binary_threshold=args.binary_threshold,
+                semantic_rescue=args.semantic_rescue,
+                semantic_threshold=args.semantic_threshold,
             )
             summary["all"] = all_metrics
             summary["full_map_outputs"] = all_paths

@@ -83,6 +83,7 @@ class WPIPLoss(nn.Module):
         lambda_proto=0.2,
         lambda_pseudo=0.5,
         lambda_cons=0.1,
+        lambda_semantic_binary=0.0,
         ignore_index=-1,
         semantic_class_weights=None,
         binary_class_weights=None,
@@ -93,6 +94,7 @@ class WPIPLoss(nn.Module):
         self.lambda_proto = lambda_proto
         self.lambda_pseudo = lambda_pseudo
         self.lambda_cons = lambda_cons
+        self.lambda_semantic_binary = lambda_semantic_binary
         self.ignore_index = ignore_index
         self.semantic_change_only = semantic_change_only
         if semantic_class_weights is not None:
@@ -133,8 +135,16 @@ class WPIPLoss(nn.Module):
         loss_proto = self.proto_loss(outputs["prototype_logits"], labels)
         loss_pseudo = self.pseudo_loss(outputs["final_logits"], outputs["pseudo_label"], outputs["pseudo_mask"])
         loss_cons = self.consistency(outputs["final_logits"], outputs["binary_logits"])
+        loss_sem_bin = self.semantic_binary_feedback_loss(outputs["final_logits"], outputs["binary_logits"], labels)
 
-        total = loss_binary + self.lambda_sem * loss_sem + self.lambda_proto * loss_proto + self.lambda_pseudo * loss_pseudo + self.lambda_cons * loss_cons
+        total = (
+            loss_binary
+            + self.lambda_sem * loss_sem
+            + self.lambda_proto * loss_proto
+            + self.lambda_pseudo * loss_pseudo
+            + self.lambda_cons * loss_cons
+            + self.lambda_semantic_binary * loss_sem_bin
+        )
         return {
             "loss": total,
             "loss_binary": loss_binary.detach(),
@@ -142,4 +152,29 @@ class WPIPLoss(nn.Module):
             "loss_proto": loss_proto.detach(),
             "loss_pseudo": loss_pseudo.detach(),
             "loss_consistency": loss_cons.detach(),
+            "loss_semantic_binary": loss_sem_bin.detach(),
         }
+
+    def semantic_binary_feedback_loss(self, final_logits: torch.Tensor, binary_logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Let confident semantic-change evidence pull the binary branch toward change.
+
+        This term is active only on labeled change pixels. It preserves the
+        no-change supervision of the binary CE while reducing binary false
+        negatives for classes 1..K.
+        """
+        if self.lambda_semantic_binary <= 0:
+            return binary_logits.sum() * 0.0
+        if final_logits.shape[-2:] != labels.shape[-2:]:
+            final_logits = resize_logits(final_logits, labels)
+        if binary_logits.shape[-2:] != labels.shape[-2:]:
+            binary_logits = resize_logits(binary_logits, labels)
+
+        change_mask = labels > 0
+        if change_mask.sum() == 0:
+            return binary_logits.sum() * 0.0
+
+        sem_conf = torch.softmax(final_logits[:, 1:], dim=1).amax(dim=1).detach()
+        binary_change_logit = binary_logits[:, 1] - binary_logits[:, 0]
+        weight = sem_conf[change_mask].clamp_min(0.25)
+        target = torch.ones_like(weight)
+        return F.binary_cross_entropy_with_logits(binary_change_logit[change_mask], target, weight=weight)

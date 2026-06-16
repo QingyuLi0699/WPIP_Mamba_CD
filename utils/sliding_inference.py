@@ -21,19 +21,38 @@ def center_logits(logits: torch.Tensor) -> torch.Tensor:
     return logits[:, :, h // 2, w // 2]
 
 
-def predict_from_outputs(outputs: Dict[str, torch.Tensor], two_stage: bool = False, binary_threshold: float = 0.5) -> torch.Tensor:
+def predict_from_outputs(
+    outputs: Dict[str, torch.Tensor],
+    two_stage: bool = False,
+    binary_threshold: float = 0.5,
+    semantic_rescue: bool = False,
+    semantic_threshold: float = 0.99,
+) -> torch.Tensor:
     """Return center predictions from model outputs."""
     final_center = center_logits(outputs["final_logits"])
     if not two_stage:
         return final_center.argmax(dim=1)
     binary_center = center_logits(outputs["binary_logits"])
     change_prob = torch.softmax(binary_center, dim=1)[:, 1]
-    change_pred = final_center[:, 1:].argmax(dim=1) + 1
-    return torch.where(change_prob >= binary_threshold, change_pred, torch.zeros_like(change_pred))
+    semantic_prob = torch.softmax(final_center[:, 1:], dim=1)
+    semantic_conf, semantic_idx = semantic_prob.max(dim=1)
+    change_pred = semantic_idx + 1
+    is_change = change_prob >= binary_threshold
+    if semantic_rescue:
+        is_change = is_change | (semantic_conf >= semantic_threshold)
+    return torch.where(is_change, change_pred, torch.zeros_like(change_pred))
 
 
 @torch.no_grad()
-def predict_patch_centers(model, loader, device: torch.device, two_stage: bool = False, binary_threshold: float = 0.5) -> np.ndarray:
+def predict_patch_centers(
+    model,
+    loader,
+    device: torch.device,
+    two_stage: bool = False,
+    binary_threshold: float = 0.5,
+    semantic_rescue: bool = False,
+    semantic_threshold: float = 0.99,
+) -> np.ndarray:
     """Predict one class per patch center from a loader."""
     model.eval()
     preds = []
@@ -41,7 +60,13 @@ def predict_patch_centers(model, loader, device: torch.device, two_stage: bool =
         x1 = x1.to(device=device, dtype=torch.float32)
         x2 = x2.to(device=device, dtype=torch.float32)
         outputs = model(x1, x2)
-        pred = predict_from_outputs(outputs, two_stage=two_stage, binary_threshold=binary_threshold)
+        pred = predict_from_outputs(
+            outputs,
+            two_stage=two_stage,
+            binary_threshold=binary_threshold,
+            semantic_rescue=semantic_rescue,
+            semantic_threshold=semantic_threshold,
+        )
         preds.append(pred.cpu().numpy())
     if not preds:
         return np.asarray([], dtype=np.int64)

@@ -1,0 +1,12 @@
+hermiston_usa all
+OA=0.910052
+AA=0.872568
+KC=0.789312
+Per-class Acc:
+  class 0: 0.918966
+  class 1: 0.795181
+  class 2: 0.841261
+  class 3: 0.920963
+  class 4: 0.823491
+  class 5: 0.951895
+  class 6: 0.856216

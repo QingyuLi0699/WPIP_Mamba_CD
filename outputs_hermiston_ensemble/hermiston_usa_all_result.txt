@@ -1,0 +1,12 @@
+hermiston_usa all ensemble
+OA=0.937881
+AA=0.822977
+KC=0.840856
+Per-class Acc:
+  class 0: 0.966766
+  class 1: 0.805852
+  class 2: 0.785951
+  class 3: 0.929953
+  class 4: 0.707349
+  class 5: 0.912536
+  class 6: 0.652432

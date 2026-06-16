@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Environments and editor state
+.env
+.venv/
+.idea/
+.vscode/
+
+# Large datasets, checkpoints, and numeric outputs
+*.pt
+*.pth
+*.ckpt
+*.mat
+*.npy
+*.npz
+*.zip
+*.tar
+*.tar.gz
+*.tif
+*.tiff
+*.nc
+
+# Local third-party/baseline source and data copies
+Comparison/
+MambaHSI-main/
+
+# Keep local lightweight experiment summaries/visualizations, but not binaries above.
+outputs_smoke/

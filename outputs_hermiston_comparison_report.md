@@ -57,6 +57,33 @@ Per-class Acc:
 | 5 | 0.9660 |
 | 6 | 0.8944 |
 
+### Balanced + Augmented Variant With 20% Training Samples
+
+Output directory: `outputs_hermiston_aug_p025_tr20`
+
+This run keeps the same single-model balanced+aug setting, but increases the
+training samples to 20% of each category while keeping `val_ratio=0.01`.
+
+| Method | OA | AA | KC |
+|---|---:|---:|---:|
+| WPIP-Mamba-CD balanced+aug, 20% train | 0.8941 | 0.9061 | 0.7650 |
+
+Per-class Acc:
+
+| Class | Acc |
+|---:|---:|
+| 0 | 0.8864 |
+| 1 | 0.8702 |
+| 2 | 0.9335 |
+| 3 | 0.9601 |
+| 4 | 0.8821 |
+| 5 | 0.9276 |
+| 6 | 0.8830 |
+
+Compared with the 10% balanced+aug run, the 20% run improves OA, AA, KC, and
+most semantic change classes. The main tradeoff is class 5, which remains strong
+but decreases from `0.9660` to `0.9276`.
+
 ### Highest OA/KC Ensemble
 
 Output directory: `outputs_hermiston_ensemble`
@@ -89,6 +116,13 @@ Balanced+augmented model:
 - `outputs_hermiston_aug_p025/hermiston_usa_test_result.txt`
 - `outputs_hermiston_aug_p025/hermiston_usa_all_result.txt`
 
+Balanced+augmented model with 20% training samples:
+
+- `outputs_hermiston_aug_p025_tr20/hermiston_usa_test_pred.png`
+- `outputs_hermiston_aug_p025_tr20/hermiston_usa_all_pred.png`
+- `outputs_hermiston_aug_p025_tr20/hermiston_usa_test_result.txt`
+- `outputs_hermiston_aug_p025_tr20/hermiston_usa_all_result.txt`
+
 Ensemble:
 
 - `outputs_hermiston_ensemble/hermiston_usa_test_pred.png`
@@ -98,9 +132,12 @@ Ensemble:
 
 ## Current Recommendation
 
-For a TGRS-style main table, use `outputs_hermiston_aug_p025` as the primary
-single-model result because it improves OA, AA, and KC over the MambaHSI
-reference and is more class-balanced.
+For a TGRS-style main table under 10% training samples, use
+`outputs_hermiston_aug_p025` as the primary single-model result because it
+improves OA, AA, and KC over the MambaHSI reference and is more class-balanced.
+
+For the 20% training-sample setting, use `outputs_hermiston_aug_p025_tr20`; it
+is the strongest balanced single-model result so far.
 
 For a best visual/full-map result, use `outputs_hermiston_ensemble` because it
 achieves the highest OA and KC.

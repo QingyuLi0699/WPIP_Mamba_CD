@@ -46,6 +46,7 @@ def parse_args():
     parser.add_argument("--no-class-weight", action="store_true")
     parser.add_argument("--class-weight-power", type=float, default=0.5)
     parser.add_argument("--train-augment", action="store_true")
+    parser.add_argument("--no-logit-calibration", action="store_true")
     parser.add_argument("--skip-inference", action="store_true")
     parser.add_argument(
         "--input-mode",
@@ -193,6 +194,7 @@ def main():
         num_change_classes=bundle.num_change_classes,
         embed_dim=args.embed_dim,
         input_mode=args.input_mode,
+        use_logit_calibration=not args.no_logit_calibration,
     ).to(device)
     semantic_weights = None
     binary_weights = None

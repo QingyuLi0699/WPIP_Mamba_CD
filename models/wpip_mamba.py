@@ -45,6 +45,7 @@ class WPIPMamba(nn.Module):
         encoder_depth: int = 3,
         encoder_downsample: bool = True,
         input_mode: str = "dual",
+        use_logit_calibration: bool = True,
     ):
         super().__init__()
         if input_mode not in ("dual", "concat"):
@@ -53,6 +54,7 @@ class WPIPMamba(nn.Module):
         self.num_change_classes = num_change_classes
         self.num_total_classes = num_change_classes + 1
         self.embed_dim = embed_dim
+        self.use_logit_calibration = use_logit_calibration
 
         # Shallow feature space used by feature-level DWT and Mamba encoder.
         self.shallow_encoder = nn.Sequential(
@@ -174,13 +176,16 @@ class WPIPMamba(nn.Module):
         # 9) Uncertainty-guided residual Mamba refinement.
         refined_feature = self.refinement(semantic_feature, uncertain_mask)
         raw_final_logits = self.final_head(refined_feature)
-        nochange_logit = raw_final_logits[:, 0:1] + self.binary_logit_scale * binary_logits[:, 0:1]
-        change_logits = (
-            raw_final_logits[:, 1:]
-            + self.prototype_logit_scale * proto_logits
-            + self.binary_logit_scale * binary_logits[:, 1:2]
-        )
-        final_logits = torch.cat([nochange_logit, change_logits], dim=1)
+        if self.use_logit_calibration:
+            nochange_logit = raw_final_logits[:, 0:1] + self.binary_logit_scale * binary_logits[:, 0:1]
+            change_logits = (
+                raw_final_logits[:, 1:]
+                + self.prototype_logit_scale * proto_logits
+                + self.binary_logit_scale * binary_logits[:, 1:2]
+            )
+            final_logits = torch.cat([nochange_logit, change_logits], dim=1)
+        else:
+            final_logits = raw_final_logits
 
         return {
             "binary_logits": binary_logits,

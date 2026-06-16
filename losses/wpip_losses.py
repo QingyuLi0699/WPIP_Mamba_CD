@@ -84,6 +84,7 @@ class WPIPLoss(nn.Module):
         lambda_pseudo=0.5,
         lambda_cons=0.1,
         lambda_semantic_binary=0.0,
+        lambda_adaptive_binary=0.0,
         ignore_index=-1,
         semantic_class_weights=None,
         binary_class_weights=None,
@@ -95,6 +96,7 @@ class WPIPLoss(nn.Module):
         self.lambda_pseudo = lambda_pseudo
         self.lambda_cons = lambda_cons
         self.lambda_semantic_binary = lambda_semantic_binary
+        self.lambda_adaptive_binary = lambda_adaptive_binary
         self.ignore_index = ignore_index
         self.semantic_change_only = semantic_change_only
         if semantic_class_weights is not None:
@@ -136,6 +138,7 @@ class WPIPLoss(nn.Module):
         loss_pseudo = self.pseudo_loss(outputs["final_logits"], outputs["pseudo_label"], outputs["pseudo_mask"])
         loss_cons = self.consistency(outputs["final_logits"], outputs["binary_logits"])
         loss_sem_bin = self.semantic_binary_feedback_loss(outputs["final_logits"], outputs["binary_logits"], labels)
+        loss_adaptive_binary = self.adaptive_binary_loss(outputs, labels)
 
         total = (
             loss_binary
@@ -144,6 +147,7 @@ class WPIPLoss(nn.Module):
             + self.lambda_pseudo * loss_pseudo
             + self.lambda_cons * loss_cons
             + self.lambda_semantic_binary * loss_sem_bin
+            + self.lambda_adaptive_binary * loss_adaptive_binary
         )
         return {
             "loss": total,
@@ -153,7 +157,16 @@ class WPIPLoss(nn.Module):
             "loss_pseudo": loss_pseudo.detach(),
             "loss_consistency": loss_cons.detach(),
             "loss_semantic_binary": loss_sem_bin.detach(),
+            "loss_adaptive_binary": loss_adaptive_binary.detach(),
         }
+
+    def adaptive_binary_loss(self, outputs: dict, labels: torch.Tensor) -> torch.Tensor:
+        """Binary CE on adaptive semantic-binary gate output."""
+        if self.lambda_adaptive_binary <= 0 or "adaptive_binary_logits" not in outputs:
+            return outputs["binary_logits"].sum() * 0.0
+        adaptive_logits = resize_logits(outputs["adaptive_binary_logits"], labels)
+        binary_target = torch.where(labels == self.ignore_index, labels, (labels > 0).long())
+        return F.cross_entropy(adaptive_logits, binary_target.long(), ignore_index=self.ignore_index)
 
     def semantic_binary_feedback_loss(self, final_logits: torch.Tensor, binary_logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """Let confident semantic-change evidence pull the binary branch toward change.

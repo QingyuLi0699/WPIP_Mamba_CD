@@ -109,6 +109,12 @@ class WPIPMamba(nn.Module):
         # branch from an auxiliary assignment head into an inference-time prior.
         self.prototype_logit_scale = nn.Parameter(torch.tensor(0.25))
         self.binary_logit_scale = nn.Parameter(torch.tensor(0.25))
+        self.adaptive_gate = nn.Sequential(
+            nn.Conv2d(5, 16, kernel_size=1, bias=False),
+            nn.GroupNorm(4, 16),
+            nn.SiLU(),
+            nn.Conv2d(16, 1, kernel_size=1),
+        )
 
     def resize_label_to_feature(self, labels: torch.Tensor, feature: torch.Tensor, ignore_index: int = -1):
         """Nearest resize labels to feature map size.
@@ -187,8 +193,38 @@ class WPIPMamba(nn.Module):
         else:
             final_logits = raw_final_logits
 
+        binary_prob = torch.softmax(binary_logits, dim=1)
+        binary_change_prob = binary_prob[:, 1:2]
+        semantic_change_prob = torch.softmax(final_logits[:, 1:], dim=1).amax(dim=1, keepdim=True)
+        entropy_norm = entropy / 0.69314718056
+        gate_input = torch.cat(
+            [
+                binary_change_prob,
+                semantic_change_prob,
+                proto_conf,
+                entropy_norm.clamp(0.0, 1.0),
+                torch.abs(binary_change_prob - semantic_change_prob),
+            ],
+            dim=1,
+        )
+        adaptive_gate = torch.sigmoid(self.adaptive_gate(gate_input))
+        adaptive_change_prob = (
+            adaptive_gate * semantic_change_prob
+            + (1.0 - adaptive_gate) * binary_change_prob
+        ).clamp(1e-5, 1.0 - 1e-5)
+        adaptive_binary_logits = torch.cat(
+            [
+                torch.log1p(-adaptive_change_prob),
+                torch.log(adaptive_change_prob),
+            ],
+            dim=1,
+        )
+
         return {
             "binary_logits": binary_logits,
+            "adaptive_binary_logits": adaptive_binary_logits,
+            "adaptive_change_prob": adaptive_change_prob,
+            "adaptive_gate": adaptive_gate,
             "cd_feature": cd_feature,
             "semantic_feature": semantic_feature,
             "prototype_logits": proto_logits,

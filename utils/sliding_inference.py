@@ -27,13 +27,18 @@ def predict_from_outputs(
     binary_threshold: float = 0.5,
     semantic_rescue: bool = False,
     semantic_threshold: float = 0.99,
+    adaptive_gate: bool = False,
 ) -> torch.Tensor:
     """Return center predictions from model outputs."""
     final_center = center_logits(outputs["final_logits"])
     if not two_stage:
         return final_center.argmax(dim=1)
-    binary_center = center_logits(outputs["binary_logits"])
-    change_prob = torch.softmax(binary_center, dim=1)[:, 1]
+    if adaptive_gate and "adaptive_change_prob" in outputs:
+        h, w = outputs["adaptive_change_prob"].shape[-2:]
+        change_prob = outputs["adaptive_change_prob"][:, 0, h // 2, w // 2]
+    else:
+        binary_center = center_logits(outputs["binary_logits"])
+        change_prob = torch.softmax(binary_center, dim=1)[:, 1]
     semantic_prob = torch.softmax(final_center[:, 1:], dim=1)
     semantic_conf, semantic_idx = semantic_prob.max(dim=1)
     change_pred = semantic_idx + 1
@@ -52,6 +57,7 @@ def predict_patch_centers(
     binary_threshold: float = 0.5,
     semantic_rescue: bool = False,
     semantic_threshold: float = 0.99,
+    adaptive_gate: bool = False,
 ) -> np.ndarray:
     """Predict one class per patch center from a loader."""
     model.eval()
@@ -66,6 +72,7 @@ def predict_patch_centers(
             binary_threshold=binary_threshold,
             semantic_rescue=semantic_rescue,
             semantic_threshold=semantic_threshold,
+            adaptive_gate=adaptive_gate,
         )
         preds.append(pred.cpu().numpy())
     if not preds:

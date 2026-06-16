@@ -56,6 +56,8 @@ def parse_args():
     parser.add_argument("--semantic-rescue", action="store_true")
     parser.add_argument("--semantic-threshold", type=float, default=0.99)
     parser.add_argument("--lambda-semantic-binary", type=float, default=0.0)
+    parser.add_argument("--adaptive-gate-decision", action="store_true")
+    parser.add_argument("--lambda-adaptive-binary", type=float, default=0.0)
     parser.add_argument("--skip-inference", action="store_true")
     parser.add_argument(
         "--input-mode",
@@ -146,6 +148,7 @@ def evaluate_center_oa(
     binary_threshold: float = 0.5,
     semantic_rescue: bool = False,
     semantic_threshold: float = 0.99,
+    adaptive_gate: bool = False,
 ) -> Dict[str, float]:
     model.eval()
     running = 0.0
@@ -167,6 +170,7 @@ def evaluate_center_oa(
             binary_threshold=binary_threshold,
             semantic_rescue=semantic_rescue,
             semantic_threshold=semantic_threshold,
+            adaptive_gate=adaptive_gate,
         )
         correct += (pred[valid] == target[valid]).sum().item()
         total += valid.sum().item()
@@ -191,6 +195,7 @@ def run_sliding_inference(
     binary_threshold: float = 0.5,
     semantic_rescue: bool = False,
     semantic_threshold: float = 0.99,
+    adaptive_gate: bool = False,
 ):
     preds = predict_patch_centers(
         model,
@@ -200,6 +205,7 @@ def run_sliding_inference(
         binary_threshold=binary_threshold,
         semantic_rescue=semantic_rescue,
         semantic_threshold=semantic_threshold,
+        adaptive_gate=adaptive_gate,
     )
     indices = bundle.splits[split_name]
     h, w = bundle.labels.shape
@@ -277,6 +283,7 @@ def main():
         binary_class_weights=binary_weights,
         semantic_change_only=args.semantic_change_only,
         lambda_semantic_binary=args.lambda_semantic_binary,
+        lambda_adaptive_binary=args.lambda_adaptive_binary,
     )
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -294,6 +301,7 @@ def main():
             binary_threshold=args.binary_threshold,
             semantic_rescue=args.semantic_rescue,
             semantic_threshold=args.semantic_threshold,
+            adaptive_gate=args.adaptive_gate_decision,
         )
         is_best = val_stats["center_oa"] >= best_val
         best_val = max(best_val, val_stats["center_oa"])
@@ -332,6 +340,7 @@ def main():
             binary_threshold=args.binary_threshold,
             semantic_rescue=args.semantic_rescue,
             semantic_threshold=args.semantic_threshold,
+            adaptive_gate=args.adaptive_gate_decision,
         )
         summary = {"best_val_center_oa": best_val, args.inference_split: test_metrics, "outputs": paths}
         if args.save_full_map and args.inference_split != "all":
@@ -347,6 +356,7 @@ def main():
                 binary_threshold=args.binary_threshold,
                 semantic_rescue=args.semantic_rescue,
                 semantic_threshold=args.semantic_threshold,
+                adaptive_gate=args.adaptive_gate_decision,
             )
             summary["all"] = all_metrics
             summary["full_map_outputs"] = all_paths
